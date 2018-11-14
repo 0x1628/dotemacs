@@ -1,0 +1,1354 @@
+#+TITLE: Emacs 配置文件
+#+Author: xxxiin
+#+PROPERTY: header-args :tangle yes
+
+* 前言
+
+很长一段时间都使用 [[https://github.com/xxxiin/emacs.d][emacs.d]] 来管理我的 Emacs 配置文件。但使用过程中暴露了诸多问题：
+
+- 由于借鉴了 [[https://github.com/bodil/ohai-emacs][ohai-emacs]]，很多配置也是直接 copy-paste 过来，许多配置没有深究，多了很多无用配置不说，有些不错的功能也根本没有发掘，资源很浪费。
+- 一方面功能发掘不足，另外发掘到的功能也没有记录的地方（当然可以写一个 README，不过追究麻烦且难以同步），导致除了熟悉的命令之外其他用的更少。
+- 自定义配置会按其功能分散到不同的配置文件里，不方便检索。
+- 自己用的配置其实没必要做到高可定制，而目前使用的方案对定制还是很友好的，其实也增加了理解难度。
+
+而最近一段时间，一方面自己逐步接受了单个大文件的记录方式并深感其好处（如我现在的日记、工作记录等都只记录在一个文件内），另一方面发现社区里有许多人开始使用单个 [[http://orgmode.org/][org-mode]] 来管理 Emacs 配置文件，觉得这种管理方式值得尝试。这同时也是 [[https://en.wikipedia.org/wiki/Literate_programming][Literate Programming]] 的一种尝试。
+
+这份配置是在 [[https://www.archlinux.org/][Arch Linux]] 和 Emacs 25.1 下开发和调试的，我将尽可能少的做其他运行的检测和兼容。在使用这份配置前，请做好充分的调试。
+
+这份配置参考了以下配置文件，感谢：
+
+- [[https://github.com/wasamasa/dotemacs/blob/master/init.org]]
+- [[https://steckerhalter.tk/steckemacs/steckemacs.html]]
+- [[https://github.com/sachac/.emacs.d/blob/gh-pages/Sacha.org]]
+- [[https://github.com/larstvei/dot-emacs/blob/master/init.org]]
+
+* 使用此文件
+所有的修改需要在 ~init.org~ 里。Emacs 所需要的 ~init.el~ 由 ~init.org~ 执行 ~org-babel-tangle~ 来生成。注意 ~init.org~ 需要保留 ~:tangle yes~ 的 header arguments。
+
+* TODO 快捷键
+
+* 配置
+** 通用配置、公共变量和工具函数
+*** 引入 common-lisp 包
+
+#+BEGIN_SRC emacs-lisp
+  (require 'cl)
+#+END_SRC
+
+*** .emacs.d 目录
+
+#+BEGIN_SRC emacs-lisp
+  (setq dotfiles-dir (file-name-directory
+                      (or (buffer-file-name) (file-chase-links load-file-name))))
+#+END_SRC
+
+*** 是否联网
+
+#+BEGIN_SRC emacs-lisp
+  (defun online? ()
+    (if (and (functionp 'network-interface-list)
+             (network-interface-list))
+        (some (lambda (iface) (unless (equal "lo" (car iface))
+                           (member 'up (first (last (network-interface-info
+                                                     (car iface)))))))
+              (network-interface-list))
+      t))
+#+END_SRC
+
+*** 执行 shell 命令，命令是否可执行等
+
+#+BEGIN_SRC emacs-lisp
+  (defun x/exec (command)
+    "Run a shell command and return its output as a string, whitespace trimmed."
+    (s-trim (shell-command-to-string command)))
+
+  (defun x/exec-with-rc (command &rest args)
+    "Run a shell command and return a list containing two values: its return
+  code and its whitespace trimmed output."
+    (with-temp-buffer
+      (list (apply 'call-process command nil (current-buffer) nil args)
+            (s-trim (buffer-string)))))
+
+  (defun x/is-exec (command)
+    "Returns true if `command' is an executable on the system search path."
+    (f-executable? (s-trim (shell-command-to-string (s-concat "which " command)))))
+
+  (defun x/resolve-exec (command)
+    "If `command' is an executable on the system search path, return its absolute path.
+  Otherwise, return nil."
+    (-let [path (s-trim (shell-command-to-string (s-concat "which " command)))]
+      (when (f-executable? path) path)))
+
+  (defun x/exec-if-exec (command args)
+    "If `command' satisfies `x/is-exec', run it with `args' and return its
+  output as per `x/exec'. Otherwise, return nil."
+    (when (x/is-exec command) (x/exec (s-concat command " " args))))
+#+END_SRC
+
+** Packages
+*** 增加 melpa 源
+
+在 Emacs 24 之后我们可以通过 ~package~ 方便的管理包。首先需要初始化 ~package~，然后我们加入 [[http://melpa.milkbox.net/#/][melpa]] 源。
+
+#+BEGIN_SRC emacs-lisp
+  (require 'package)
+  (add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
+  (package-initialize)
+#+END_SRC
+
+联网状态下，刷新包内容。
+
+#+BEGIN_SRC emacs-lisp
+  (when (online?)
+    (unless package-archive-contents (package-refresh-contents)))
+#+END_SRC
+
+*** 安装 Paradox
+
+~Paradox~ 是一个增强包管理的包。提供了一些工具函数。
+
+#+BEGIN_SRC emacs-lisp
+  (when (not (package-installed-p 'paradox))
+    (package-install 'paradox))
+
+  ;; def function to fetch package if it isn't installed.
+  (defun package-require (pkg)
+    "Install a package only if it's not already installed."
+    (paradox-require pkg))
+#+END_SRC
+
+*** 安装一系列现代工具包
+
+确保这些包已安装，我们后续可以使用这些包提供的函数。包括：
+
+- [[https://github.com/rejeep/f.el][f.el]] 文件处理增强
+- [[https://github.com/magnars/s.el][s.el]] 字符串处理增强
+- [[https://github.com/magnars/dash.el][dash.el]] 列表处理增强
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'f)
+  (require 'f)
+  (package-require 's)
+  (require 's)
+  (package-require 'dash)
+  (require 'dash)
+#+END_SRC
+
+** Theme
+*** 默认全屏，隐藏工具栏、欢迎界面等无用 UI
+
+#+BEGIN_SRC emacs-lisp
+  (modify-all-frames-parameters '((fullscreen . maximized))) ; 全屏
+  (setq inhibit-startup-message t) ; 隐藏欢迎
+  (dolist (mode '(menu-bar-mode tool-bar-mode scroll-bar-mode))
+    (when (fboundp mode) (funcall mode -1)))
+#+END_SRC
+
+*** Font 与中文定义
+**** 字体
+
+修改为自己需要的字体并取消注释
+
+#+BEGIN_SRC emacs-lisp
+  ;; (set-frame-font "DejaVu Sans Mono-13")
+  ;; (set-fontset-font "fontset-default" 'han "WenQuanYi Micro Hei")
+#+END_SRC
+
+**** 字号调整
+调整字号，绑定到按键
+
+#+BEGIN_SRC emacs-lisp
+  (defun x-fonts/spec-to-list (spec)
+    (s-split "-" spec))
+
+  (defun x-fonts/list-to-spec (spec)
+    (s-join "-" spec))
+
+  (defun x-fonts/update-font-spec-size (spec increment)
+    (x-fonts/list-to-spec
+     (-update-at 7 (lambda (i) (number-to-string
+                                (+ (string-to-number i) increment)))
+                 (x-fonts/spec-to-list spec))))
+
+  (defun x-fonts/update-font-size (increment)
+    (set-frame-font
+     (x-fonts/update-font-spec-size (frame-parameter nil 'font) increment)))
+
+  (global-set-key (kbd "C-M--") (lambda () (interactive)                                
+                                  (x-fonts/update-font-size -1)))
+  (global-set-key (kbd "C-M-=") (lambda () (interactive)                                
+                                  (x-fonts/update-font-size 1)))
+#+END_SRC
+
+**** 中文标点
+
+#+BEGIN_SRC emacs-lisp
+  (setq sentence-end "\\([。！？]\\|……\\|[.?!][]\"')}]*\\($\\|[ \t]\\)\\)[ \t\n]*")
+
+  ;; 全角引号
+  (defun x-char/insert-chinese-quote ()
+    "Insert Chinese quote."
+    (interactive)
+    (insert "「」")
+    (backward-char 1))
+
+  (global-set-key (kbd "C-{") 'x-char/insert-chinese-quote)
+
+  ;; 全角双引号
+  (defun x-char/insert-chinese-double-quote ()
+    "Insert Chinese quote."
+    (interactive)
+    (insert "『』")
+    (backward-char 1))
+
+  (global-set-key (kbd "C-M-{") 'x-char/insert-chinese-double-quote)
+#+END_SRC
+
+*** linum mode
+
+#+BEGIN_SRC emacs-lisp
+  (global-linum-mode t)
+  (setq linum-format (if (not window-system) "%4d " "%4d"))
+#+END_SRC
+
+高亮当前行
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'hlinum)
+  (hlinum-activate)
+#+END_SRC
+
+modeline 里显示行信息，显示模式
+
+#+BEGIN_SRC emacs-lisp
+  (setq column-number-mode t)
+  (which-function-mode)
+#+END_SRC
+
+在特殊的 mode 下禁用 linum
+
+#+BEGIN_SRC emacs-lisp
+  (setq linum-disabled-modes
+        '(term-mode slime-repl-mode magit-status-mode help-mode nrepl-mode
+          mu4e-main-mode mu4e-headers-mode mu4e-view-mode
+          mu4e-compose-mode
+          org-mode
+          w3m-mode))
+  (defun linum-on ()
+    (unless (or (minibufferp) (member major-mode linum-disabled-modes))
+      (linum-mode 1)))
+#+END_SRC
+
+*** 括号
+
+#+BEGIN_SRC emacs-lisp
+  (show-paren-mode 1)
+#+END_SRC
+
+*** diminsh
+
+在特殊 mode 下不显示 modeline
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'diminish)
+  (eval-after-load "yasnippet" '(diminish 'yas-minor-mode))
+  (eval-after-load "ethan-wspace" '(diminish 'ethan-wspace-mode))
+  (eval-after-load "eldoc" '(diminish 'eldoc-mode))
+  (eval-after-load "rainbow-mode" '(diminish 'rainbow-mode))
+  (eval-after-load "paredit" '(diminish 'paredit-mode))
+  (eval-after-load "autopair" '(diminish 'autopair-mode))
+  (eval-after-load "abbrev" '(diminish 'abbrev-mode))
+  (eval-after-load "company" '(diminish 'company-mode))
+  (eval-after-load "js2-highlight-vars" '(diminish 'js2-highlight-vars-mode))
+  (eval-after-load "projectile" '(diminish 'projectile-mode))
+  (eval-after-load "mmm-mode" '(diminish 'mmm-mode))
+  (eval-after-load "skewer-html" '(diminish 'skewer-html-mode))
+  (eval-after-load "skewer-mode" '(diminish 'skewer-mode))
+  (eval-after-load "auto-indent-mode" '(diminish 'auto-indent-minor-mode))
+  (eval-after-load "highlight-parentheses" '(diminish 'highlight-parentheses-mode))
+  ;; (eval-after-load "subword" '(diminish 'subword-mode))
+  (eval-after-load "anzu" '(diminish 'anzu-mode))
+  (eval-after-load "cider" '(diminish 'cider-mode))
+  (eval-after-load "smartparens" '(diminish 'smartparens-mode))
+  (eval-after-load "git-gutter" '(diminish 'git-gutter-mode))
+  (eval-after-load "volatile-highlights" '(diminish 'volatile-highlights-mode))
+#+END_SRC
+
+*** Mac
+如果是 Mac，我们修改一下键位，与其他平台保持一致。
+
+#+BEGIN_SRC emacs-lisp
+  (when (eq system-type 'darwin)
+    (setq mac-command-modifier 'meta)
+    (setq mac-option-modifier 'super)
+  )
+#+END_SRC
+
+*** TODO 主题
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'solarized-theme)
+#+END_SRC
+
+**** TODO 浅色主题
+
+#+BEGIN_SRC emacs-lisp
+  (defun x-appearance/light ()
+    (interactive)
+    (disable-theme 'solarized-dark)
+    (load-theme 'solarized-light t)
+    (set-face-foreground 'linum "#ddd")
+    (set-face-attribute 'linum-highlight-face nil :background "#f7eac5" :foreground "#ddd" :weight 'normal)
+    (setq x-underline-at-descent-line t)
+    (run-hooks 'x-appearance/hook)
+    (run-hooks 'x-appearance/light-hook))
+
+#+END_SRC
+
+**** TODO 深色主题
+
+#+BEGIN_SRC emacs-lisp
+  (defun x-appearance/dark ()
+    (interactive)
+    (disable-theme 'solarized-light)
+    (load-theme 'solarized-dark t)
+    (setq x-underline-at-descent-line t)
+    (run-hooks 'x-appearance/hook)
+    (run-hooks 'x-appearance/dark-hook))
+#+END_SRC
+
+
+**** 设置主题
+
+#+BEGIN_SRC emacs-lisp
+  (x-appearance/light)
+#+END_SRC
+
+*** 其他设置
+
+视窗下自定义窗口标题，禁用鼠标闪动等
+
+#+BEGIN_SRC emacs-lisp
+  ;; When not in a terminal, configure a few window system specific things.
+  (when window-system
+    (setq frame-title-format '(buffer-file-name "%f" ("%b")))
+    (tooltip-mode -1)
+    (mouse-wheel-mode t)
+    (blink-cursor-mode -1))
+#+END_SRC
+
+禁用声音
+
+#+BEGIN_SRC emacs-lisp
+  (setq ring-bell-function 'ignore)
+#+END_SRC
+
+** 调整 Emacs 烦人的默认策略
+*** Scratch
+
+#+BEGIN_SRC emacs-lisp
+  (setq initial-scratch-message "Happy Hacking!")
+  (setq initial-major-mode 'emacs-lisp-mode)
+#+END_SRC
+
+*** 简化 yes/no
+
+#+BEGIN_SRC emacs-lisp
+  (fset 'yes-or-no-p 'y-or-n-p)
+#+END_SRC
+
+*** 调整备份文件位置
+
+Emacs 默认在当前文件下生成 ~filename~~ 来做备份。我们调整到 ~\~/.emacs.d/bak~ 下。
+
+#+BEGIN_SRC emacs-lisp
+  (setq backup-directory-alist
+        `(("." . ,(expand-file-name (concat dotfiles-dir "bak")))))
+#+END_SRC
+
+*** 文件更新时自动更新没有修改的缓存
+
+#+BEGIN_SRC emacs-lisp
+  (global-auto-revert-mode 1)
+#+END_SRC
+
+*** 使用 ~xdg-open~ 打开 URL
+
+#+BEGIN_SRC emacs-lisp
+  (when (x/is-exec "xdg-open")
+    (setq-default
+     browse-url-browser-function (quote browse-url-generic)
+     browse-url-generic-program "xdg-open"))
+#+END_SRC
+
+** 光标位置切换
+*** buffer 内跳转增强
+
+安装 buffer 内跳转的增强库 [[https://github.com/abo-abo/avy][avy]]，并绑定快捷键
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'avy)
+  (global-set-key (kbd "C-;") 'avy-goto-word-1)
+  (global-set-key (kbd "C-:") 'avy-goto-char)
+  (with-eval-after-load "isearch"
+    (define-key isearch-mode-map (kbd "C-;") 'avy-isearch))
+#+END_SRC
+
+*** 更智能的 ~C-a~ 操作
+
+#+BEGIN_SRC emacs-lisp
+  (defun smart-beginning-of-line ()
+    "Move point to first non-whitespace character or beginning-of-line."
+    (interactive "^")
+    (let ((oldpos (point)))
+      (back-to-indentation)
+      (and (= oldpos (point))
+           (beginning-of-line))))
+  (global-set-key (kbd "<home>") 'smart-beginning-of-line)
+  (global-set-key (kbd "C-a") 'smart-beginning-of-line)
+#+END_SRC
+
+*** 跳转到行数
+
+#+BEGIN_SRC emacs-lisp
+  (global-set-key (kbd "M-g") 'goto-line)
+#+END_SRC
+
+*** 将驼峰看作多个单词
+
+#+BEGIN_SRC emacs-lisp
+  (global-subword-mode 1)
+#+END_SRC
+
+*** 窗口管理增强
+
+安装 [[https://github.com/abo-abo/ace-window][ace]] 包。
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'ace-window)
+  (global-set-key (kbd "C-x o") 'ace-window)
+  (global-set-key (kbd "C-x C-o") 'ace-swap-window)
+#+END_SRC
+
+*** 搜索增加全文数量显示，增强替换功能
+
+安装 [[https://github.com/syohex/emacs-anzu][anzu]] 包。
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'anzu)
+  (global-anzu-mode 1)
+
+  (global-set-key (kbd "C-%") 'anzu-query-replace-at-cursor)
+  (global-set-key (kbd "M-%") 'anzu-query-replace)
+  (global-set-key (kbd "C-M-%") 'anzu-query-replace-regexp)
+#+END_SRC
+
+*** 快捷切换窗口
+
+一般情况下我只使用左右分窗，只对左右定义。
+
+#+BEGIN_SRC emacs-lisp
+  (global-set-key (kbd "C-M-j") 'windmove-left)
+  (global-set-key (kbd "C-M-k") 'windmove-right)
+#+END_SRC
+
+** 通用编辑规则
+*** 多行光标
+
+安装 [[https://github.com/magnars/multiple-cursors.el][multiple-cursors]] 包。
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'multiple-cursors)
+  (global-set-key (kbd "<insert>") 'mc/mark-next-like-this)
+  (global-set-key (kbd "S-<insert>") 'mc/mark-previous-like-this)
+  (global-set-key (kbd "C-'") 'mc/mark-more-like-this-extended)
+  (global-set-key (kbd "C-\"") 'mc/mark-all-like-this-dwim)
+  (global-set-key (kbd "C-M-'") 'mc/edit-lines)
+#+END_SRC
+
+*** 全文缩进
+
+#+BEGIN_SRC emacs-lisp
+  (defun indent-buffer ()
+    (interactive)
+    (indent-region (point-min) (point-max)))
+  (global-set-key (kbd "C-c <tab>") 'indent-buffer)
+#+END_SRC
+
+*** 智能区域选择
+
+安装 [[https://github.com/magnars/expand-region.el][expand-region]] 包。
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'expand-region)
+  (global-set-key (kbd "C-=") 'er/expand-region)
+#+END_SRC
+
+*** 自动补全括号
+
+#+BEGIN_SRC emacs-lisp
+  (electric-pair-mode 1)
+#+END_SRC
+
+*** sudo-edit
+
+#+BEGIN_SRC emacs-lisp
+  (defun sudo-edit (&optional arg)
+    (interactive "p")
+    (if (or arg (not buffer-file-name))
+	(find-file (concat "/sudo:root@localhost:"
+                           (if (fboundp 'helm-read-file-name)
+                               (helm-read-file-name "File: ")
+                             (ido-read-file-name "File: "))))
+      (find-alternate-file (concat "/sudo:root@localhost:" buffer-file-name))))
+#+END_SRC
+
+** 文件浏览
+*** ido
+**** 初始化
+
+ #+BEGIN_SRC emacs-lisp
+   ;; Enable ido-mode.
+   (ido-mode t)
+   (ido-everywhere t)
+   (setq ido-enable-prefix nil
+	 ido-enable-flex-matching t
+	 ido-create-new-buffer 'always
+	 ido-use-filename-at-point 'guess
+	 ido-use-url-at-point t
+	 ido-max-prospects 10
+	 ido-use-virtual-buffers t)
+
+   ;; Make sure ido is really everywhere.
+   (package-require 'ido-completing-read+)
+   (ido-ubiquitous-mode)
+ #+END_SRC
+
+**** 调整布局为垂直
+
+ #+BEGIN_SRC emacs-lisp
+   (package-require 'ido-vertical-mode)
+   (ido-vertical-mode)
+ #+END_SRC
+
+**** 增强 ~M-x~ 界面
+
+ 安装 [[https://github.com/nonsequitur/smex][smex]]。
+
+ #+BEGIN_SRC emacs-lisp
+   (package-require 'smex)
+   (smex-initialize)
+   (global-set-key (kbd "M-x") 'smex)
+   (global-set-key (kbd "M-X") 'smex-major-mode-commands)
+   ;; This is the old M-x.
+   (global-set-key (kbd "C-c C-c M-x") 'execute-extended-command)
+ #+END_SRC
+
+**** 模糊匹配
+
+ 安装 [[https://github.com/lewang/flx][flx-ido]]。
+
+ #+BEGIN_SRC emacs-lisp
+   (package-require 'flx-ido)
+   (flx-ido-mode 1)
+   (setq ido-enable-flex-matching t
+	 ido-use-faces nil
+	 gc-cons-threshold 20000000)
+ #+END_SRC
+
+**** 当 ~\~~ 时跳转到 home 目录
+
+ #+BEGIN_SRC emacs-lisp
+   ;; From http://whattheemacsd.com/setup-ido.el-02.html
+   (add-hook 'ido-setup-hook
+    (lambda ()
+      ;; Go straight home
+      (define-key ido-file-completion-map
+	(kbd "~")
+	(lambda ()
+	  (interactive)
+	  (if (looking-back "/")
+              (insert "~/")
+            (call-interactively 'self-insert-command))))))
+ #+END_SRC
+
+*** projectile
+
+#+BEGIN_SRC emacs-lisp
+(package-require 'projectile)
+(projectile-global-mode)
+
+(global-set-key (kbd "C-c C-p") 'projectile-find-file)
+#+END_SRC
+
+** 编程基础
+*** CodeStyle
+**** 默认空格缩进
+
+#+BEGIN_SRC emacs-lisp
+  (set-default 'indent-tabs-mode nil)
+#+END_SRC
+
+**** 回车永远自动缩进
+
+#+BEGIN_SRC emacs-lisp
+  (define-key global-map (kbd "RET") 'newline-and-indent)
+#+END_SRC
+
+**** 提示不必要的空格
+
+安装 [[https://github.com/glasserc/ethan-wspace][ethan-wspace]]。
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'ethan-wspace)
+  (setq mode-require-final-newline nil)
+  (setq require-final-newline nil)
+  (global-ethan-wspace-mode 1)
+  (global-set-key (kbd "C-c c") 'ethan-wspace-clean-all)
+#+END_SRC
+
+**** 设置默认缩进
+
+#+BEGIN_SRC emacs-lisp
+  ;; Set default indentation for various languages (add your own!)
+  (setq-default tab-width 4)
+  ;; Javascript
+  (setq-default js2-basic-offset 2)
+  ;; JSON
+  (setq-default js-indent-level 2)
+  ;; Coffeescript
+  (setq coffee-tab-width 2)
+  ;; Typescript
+  (setq typescript-indent-level 2
+    typescript-expr-indent-offset 2)
+  ;; Python
+  (setq-default py-indent-offset 2)
+  ;; XML
+  (setq-default nxml-child-indent 2)
+  ;; C
+  (setq-default c-basic-offset 2)
+  ;; CSS
+  (setq css-indent-offset 2)
+  ;; HTML etc with web-mode
+  (setq-default web-mode-markup-indent-offset 2
+	    web-mode-css-indent-offset 2
+	    web-mode-code-indent-offset 2
+	    web-mode-style-padding 2
+	    web-mode-script-padding 2
+        web-mode-attr-indent-offset 2)
+#+END_SRC
+
+**** 默认代码格式
+
+包括大括号位置等。默认使用 java。
+
+#+BEGIN_SRC emacs-lisp
+  (setq c-default-style
+	'((awk-mode . "awk")
+          (other . "java")))
+#+END_SRC
+
+*** Git
+
+安装 [[http://magit.github.io/][magit]]。
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'magit)
+  (global-set-key (kbd "C-x g") 'magit-status)
+#+END_SRC
+
+在侧栏显示未提交的修改。
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'git-gutter-fringe)
+  (require 'git-gutter-fringe)
+  (global-git-gutter-mode t)
+#+END_SRC
+
+快捷创建 [[https://github.com/defunkt/gist.el][gist]]。
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'gist)
+#+END_SRC
+
+*** Flycheck
+
+[[http://www.flycheck.org/][Flycheck]] 是一个通用代码风格检测工具。
+
+**** 初始化
+
+ #+BEGIN_SRC emacs-lisp
+   (package-require 'flycheck)
+
+   ;; Jump between current errors with M-n and M-p.
+   (global-set-key (kbd "M-n") 'next-error)
+   (global-set-key (kbd "M-p") 'previous-error)
+
+   ;; Turn the modeline red when Flycheck has errors.
+   (package-require 'flycheck-color-mode-line)
+ #+END_SRC
+
+**** 主题微调
+
+#+BEGIN_SRC emacs-lisp
+  (add-hook
+   'x-appearance/dark-hook
+   (lambda ()
+     (with-eval-after-load "flycheck"
+       (set-face-background 'flycheck-error "#660000")
+       (set-face-foreground 'flycheck-error nil)
+       (set-face-background 'flycheck-warning "#331800")
+       (set-face-foreground 'flycheck-warning nil)
+       (require 'flycheck-color-mode-line)
+       (set-face-background 'flycheck-color-mode-line-error-face "#440000")
+       (set-face-background 'flycheck-color-mode-line-warning-face "#553300")
+       (set-face-background 'flycheck-color-mode-line-info-face nil)
+       (set-face-foreground 'flycheck-color-mode-line-error-face "#ffffff")
+       (set-face-foreground 'flycheck-color-mode-line-warning-face "#ffffff")
+       (set-face-foreground 'flycheck-color-mode-line-info-face nil))))
+
+  (add-hook
+   'x-appearance/light-hook
+   (lambda ()
+     (with-eval-after-load "flycheck"
+       (set-face-background 'flycheck-error "#ff8888")
+       (set-face-foreground 'flycheck-error nil)
+       (set-face-background 'flycheck-warning "#ffcc88")
+       (set-face-foreground 'flycheck-warning nil)
+       (require 'flycheck-color-mode-line)
+       (set-face-background 'flycheck-color-mode-line-error-face "#ff0000")
+       (set-face-foreground 'flycheck-color-mode-line-error-face "#ffffff")
+       (set-face-background 'flycheck-color-mode-line-warning-face "#886600")
+       (set-face-foreground 'flycheck-color-mode-line-warning-face "#ffffff")
+       (set-face-background 'flycheck-color-mode-line-info-face nil)
+       (set-face-foreground 'flycheck-color-mode-line-info-face nil))))
+
+  (with-eval-after-load "flycheck"
+    (setq flycheck-highlighting-mode 'symbols)
+    (add-hook 'flycheck-mode-hook 'flycheck-color-mode-line-mode))
+#+END_SRC
+
+*** 自动补全 
+
+安装 company mode。
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'company)
+  (require 'company)
+  (global-company-mode)
+  ;; Except when you're in term-mode.
+  (setq company-global-modes '(not term-mode org-mode))
+#+END_SRC
+
+一些默认配置。
+
+#+BEGIN_SRC emacs-lisp
+  (setq company-minimum-prefix-length 2
+        company-selection-wrap-around t
+        company-show-numbers t
+        company-tooltip-align-annotations t
+        company-require-match nil
+        company-dabbrev-downcase nil
+        company-dabbrev-ignore-case nil
+        company-idle-delay .2)
+
+  ;; Sort completion candidates that already occur in the current
+  ;; buffer at the top of the candidate list.
+  (setq company-transformers '(company-sort-by-occurrence))
+#+END_SRC
+
+如果自动补全有文档，显示文档。
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'company-quickhelp)
+  (setq company-quickhelp-delay 1)
+  (company-quickhelp-mode 1)
+#+END_SRC
+
+绑定到 ~C-\~ 上。
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'company-try-hard)
+  (global-set-key (kbd "C-\\") #'company-try-hard)
+  (define-key company-active-map (kbd "C-\\") #'company-try-hard)
+#+END_SRC
+
+*** Snippets
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'yasnippet)
+  (require 'yasnippet)
+  (yas-global-mode 1)
+#+END_SRC
+
+*** Emmet
+
+Zen Coding Mode。
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'emmet-mode)
+
+  (add-hook 'web-mode-hook 'emmet-mode) ;; Auto-start on any markup modes
+  (add-hook 'css-mode-hook  'emmet-mode) ;; enable Emmet's css abbreviation.
+#+END_SRC
+
+** Modes
+*** Org
+**** 更新
+安装最新版 org mode
+
+#+BEGIN_SRC emacs-lisp
+  (if (s-starts-with? "8" (org-version))
+      (package-install (cadr (assq 'org package-archive-contents))))
+#+END_SRC
+
+**** 全局快捷键
+
+#+BEGIN_SRC emacs-lisp
+  (global-set-key "\C-cl" 'org-store-link)
+  (global-set-key "\C-cc" 'org-capture)
+  (global-set-key "\C-ca" 'org-agenda)
+  (global-set-key "\C-cb" 'org-iswitchb)
+#+END_SRC
+
+**** 配置
+
+包括完成时记录时间、模板等。
+
+#+BEGIN_SRC emacs-lisp
+  (setq org-log-done t
+        org-completion-use-ido t
+        org-edit-timestamp-down-means-later t
+        org-archive-mark-done nil
+        org-catch-invisible-edits 'show
+        org-export-coding-system 'utf-8
+        org-fast-tag-selection-single-key 'expert
+        org-html-validation-link nil
+        org-export-kill-product-buffer-when-displayed t
+        org-tags-column 20)
+
+  (setq org-default-notes-file (concat org-directory "/inbox.org"))
+
+
+  (setq org-capture-templates
+        `(("t" "todo" entry (file+headline "" "Next")  ; "" => `org-default-notes-file'
+           "* TODO %?\n%U\n\n" :clock-resume t)
+          ("n" "note" entry (file+headline "" "Chores")
+           "* %? :NOTE:\n%U\n%a\n\n" :clock-resume t)
+          ))
+
+  (setq org-refile-use-cache nil)
+
+  ;; Targets include this file and any file contributing to the agenda - up to 5 levels deep
+  (setq org-refile-targets '((nil :maxlevel . 5) (org-agenda-files :maxlevel . 5)))
+
+  (setq org-agenda-files (list (concat org-directory "/inbox.org")))
+#+END_SRC
+
+**** DONE Org Publish
+     CLOSED: [2017-02-02 Thu 17:44]
+
+借鉴了 [[http://endlessparentheses.com/how-i-blog-one-year-of-posts-in-a-single-org-file.html][How I blog: One year of posts in a single org file]]，我也觉得在一个文件内写自己所有的 Blog，不仅是一件很 Cool 的事情，也非常方便。决定一试。
+
+最后的方案，Blog 使用 Org Mode 编写在一个文件里。每个 headline 可以被发布。发布结果为 body 内容（~body-only: t~）。
+
+这一步之后，本来希望是直接使用Hexo等系统来完成浏览器展示，但折腾了许久终究有各种各样的不顺手。一怒之下简单写了一个[[https://github.com/xxxiin/xblog][xblog]]。做的事情很简单，就是把之前生成的HTML Body Content给显示出来。为了显然标题、时间等信息，在文件开头使用了与Hexo类似的Meta Data结构。
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'ox-publish)
+
+  (defconst xxxiin/blog-dir "~/Dropbox/xxxiin/www/")
+
+  (defun xxxiin/prepare-input-buffer (content)
+    (insert content))
+
+  (defun xxxiin/replace-img-src (content)
+    (replace-regexp-in-string "\.\/img\/" "/img/" content))
+
+  (defun xxxiin/get-heading-url ()
+    (if-let (u (org-entry-get (point) "url"))
+        u
+      (s-downcase (s-dashed-words (org-get-heading t t)))))
+
+  (defun xxxiin/org-buffer-to-file (title date tags url folder)
+    (with-current-buffer "*Org HTML Export*"
+      (let ((str (xxxiin/replace-img-src (buffer-substring-no-properties
+                                          (point-min) (point-max)))))
+        (erase-buffer)
+        (insert str))
+      (goto-char (point-min))
+      (insert "---\n")
+      (insert (concat "title: " title "\n"))
+      (insert (concat "date: "
+                      (format-time-string
+                       "%Y-%m-%d %H:%M:%S" date) "\n"))
+      (insert
+       (concat
+        "tags:\n"
+        (s-join
+         "\n"
+         (-map (lambda (s) (concat "- " s)) tags))))
+      (insert "\n---\n")
+
+      ;; Save final file
+      (let ((out-file
+             (expand-file-name
+              (concat folder "/" url ".xb")
+              xxxiin/blog-dir)))
+        (write-file out-file)))
+    (kill-buffer))
+
+  (defun xxxiin/export-section-to-blog ()
+    "Exports current subtree to blog."
+    (interactive)
+    (if (plist-get (org-export-get-environment) :title)
+        (error "This file can't export section"))
+    (save-excursion
+      (while (null (org-entry-get (point) "TODO" nil t))
+        (outline-up-heading 1 t))
+
+      (unless (s-equals? (org-entry-get (point) "TODO") "DONE")
+        (org-todo 'done))
+
+      (setq-local subtree-content-temp
+                  (save-restriction
+                    (org-narrow-to-subtree)
+                    (goto-char (point-min))
+                    (org-end-of-meta-data)
+                    (narrow-to-region (point) (point-max))
+                    (ignore-errors (ispell-buffer))
+                    (buffer-string)))
+
+      (let* ((closed-stamp (org-entry-get (point) "CLOSED" t))
+             (date (if closed-stamp
+                       (date-to-time closed-stamp)
+                     (current-time)))
+             (tags (nreverse (org-get-tags-at)))
+             (title (org-get-heading t t))
+             (url (xxxiin/get-heading-url))
+             (series (org-entry-get (point) "series" t))
+             (folder (file-name-base))
+             (subtree-content subtree-content-temp))
+        (with-temp-buffer
+          (setq-local org-export-show-temporary-export-buffer nil)
+          (xxxiin/prepare-input-buffer subtree-content)
+          (org-html-export-as-html nil nil nil t '(:with-toc nil :section-numbers nil))
+          (xxxiin/org-buffer-to-file title date tags url folder)))))
+
+  (defun xxxiin/export-index ()
+    "Exports current file to index."
+    (interactive)
+    (if (plist-get (org-export-get-environment) :title)
+        (error "This file can't export index"))
+    (save-excursion
+      (goto-char (point-min))
+      (org-forward-heading-same-level 1)
+      (let* ((result '())
+             (last-title nil)
+             (title (org-get-heading t t))
+             (folder (file-name-base)))
+        (while (not (s-equals? last-title title))
+          (setq-local last-title title)
+          (if (s-equals? (org-entry-get (point) "TODO") "DONE")
+              (progn
+                (setq-local
+                 result
+                 (-insert-at 0
+                             (list
+                              title
+                              (xxxiin/get-heading-url)
+                              (date-to-time (org-entry-get (point) "CLOSED" t))
+                              )
+                             result))))
+                (org-forward-heading-same-level 1)
+                (setq-local title (org-get-heading t t)))
+        (let ((bresult result))
+          (with-temp-buffer
+            (setq-local org-export-show-temporary-export-buffer nil)
+            (insert (concat "title: " folder "\n"))
+            (insert "links:\n")
+            (-map (lambda(item) (progn
+                                  (insert
+                                   (concat
+                                    (concat "- title: "  (nth 0 item) "\n")
+                                    (concat "  url: " (nth 1 item) "\n")
+                                    (concat "  date: " (format-time-string
+                                                        "%Y-%m-%d %H:%M:%S" (nth 2 item)) "\n")
+                                    ))))
+                  bresult)
+            (let ((out-file
+                     (expand-file-name
+                      (concat folder "/index.yml")
+                      xxxiin/blog-dir)))
+                (write-file out-file))
+            )))))
+
+  (defun xxxiin/export-file-to-blog ()
+    "Exports current file to blog article."
+    (interactive)
+    (if (not (plist-get (org-export-get-environment) :title))
+        (error "This file can't export"))
+    (save-excursion
+      (let* ((date (org-publish-find-date (buffer-name)))
+             (tags (nreverse (org-get-tags-at)))
+             (title (nth 0 (plist-get (org-export-get-environment) :title)))
+             (url (file-name-base))
+             (folder (f-filename (f-dirname (buffer-file-name))))
+             (buffer (buffer-string)))
+          (with-temp-buffer
+            (setq-local org-export-show-temporary-export-buffer nil)
+            (insert buffer)
+            (org-html-export-as-html nil nil nil t '(:section-numbers nil))
+            (xxxiin/org-buffer-to-file title date tags url folder)))))
+#+END_SRC
+
+**** Olivetti
+
+让浏览 Org 文件时更好看。安装 [[https://github.com/rnkn/olivetti][Olivetti]]。
+
+#+BEGIN_SRC emacs-lisp
+(package-require 'olivetti)
+(add-hook 'org-mode-hook
+          (lambda () (setq-local olivetti-body-width 100)))
+(add-hook 'org-mode-hook 'olivetti-mode)
+(add-hook 'olivetti-mode-hook
+          (lambda () (setq-local word-wrap nil)))
+#+END_SRC
+
+**** 内联标签的上下文
+
+默认 Emacs 内联标签不能紧跟中文标点。
+
+#+BEGIN_SRC emacs-lisp
+  (setq org-emphasis-regexp-components
+        '(" \t('\"{“”,.，。（「"
+          "- \t.,!?;''“”，。）」：？！」\")}/\\“”"
+          " \t\r\n,"
+          "."
+          1))
+  (org-set-emph-re 'org-emphasis-regexp-components org-emphasis-regexp-components)
+#+END_SRC
+
+**** Org Blog
+
+配置 Blog 目录。
+#+BEGIN_SRC emacs-lisp
+  (setq org-publish-project-alist
+        '(
+          ("notes"
+           :base-directory "~/Dropbox/xxxiin/org/note"
+           :base-extension "org"
+           :publishing-directory "~/Dropbox/xxxiin/www/note"
+           :recursive t
+           :exclude ".*\.draft\.org\\|journal\.org"
+           :publishing-function org-html-publish-to-html
+           :headline-levels 2
+           :section-numbers nil
+           :auto-preamble t
+           :body-only t
+           :auto-sitemap t                ; Generate sitemap.org automagically...
+           :sitemap-filename "notes.org"  ; ... call it sitemap.org (it's the default)...
+           :sitemap-title "xxxiin"
+           :sitemap-date-format "%Y%m%d"
+           :sitemap-sort-files anti-chronologically
+           :author "xxxiin"
+           :email "i at xxxiin dot com"
+           )
+          ("static"
+           :base-directory "~/Dropbox/xxxiin/org/"
+           :base-extension "css\\|js\\|png\\|jpg\\|gif\\|pdf\\|mp3\\|ogg\\|swf"
+           :publishing-directory (concat xxxiin/blog-dir "source")
+           :recursive t
+           :publishing-function org-publish-attachment
+           )
+          ("xxxiin" :components ("notes" "static"))
+          ))
+#+END_SRC
+
+**** misc
+***** 去掉链接自动格式化
+ #+BEGIN_SRC emacs-lisp
+  (setq org-highlight-links (quote (bracket angle radio tag date footnote)))
+#+END_SRC
+
+*** Lisp
+**** 多彩括号
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'rainbow-delimiters)
+  (add-hook 'clojure-mode-hook #'rainbow-delimiters-mode)
+  (add-hook 'emacs-lisp-mode-hook #'rainbow-delimiters-mode)
+  (add-hook 'lisp-mode-hook #'rainbow-delimiters-mode)
+#+END_SRC
+
+*** Clojure
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'paredit)
+  (package-require 'clojure-mode)
+  (package-require 'clojure-mode-extra-font-locking)
+  (package-require 'cider)
+#+END_SRC
+
+*** HTML
+
+初始化 web-mode 并绑定合适后缀到 web-mode 上。
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'web-mode)
+
+  (add-to-list 'auto-mode-alist '("\\.html?\\'" . web-mode))
+
+  (add-to-list 'auto-mode-alist '("\\.phtml\\'" . web-mode))
+  (add-to-list 'auto-mode-alist '("\\.tpl\\.php\\'" . web-mode))
+  (add-to-list 'auto-mode-alist '("\\.[agj]sp\\'" . web-mode))
+  (add-to-list 'auto-mode-alist '("\\.as[cp]x\\'" . web-mode))
+  (add-to-list 'auto-mode-alist '("\\.erb\\'" . web-mode))
+  (add-to-list 'auto-mode-alist '("\\.mustache\\'" . web-mode))
+  (add-to-list 'auto-mode-alist '("\\.djhtml\\'" . web-mode))
+#+END_SRC
+
+高亮当前标签。
+
+#+BEGIN_SRC emacs-lisp
+  (setq-default web-mode-enable-current-element-highlight t)
+#+END_SRC
+
+*** CSS
+
+为 less 等文件指定到 css-mode。
+
+#+BEGIN_SRC emacs-lisp
+  (add-to-list 'auto-mode-alist '("\\.less\\'" . css-mode))
+  (add-to-list 'auto-mode-alist '("\\.scss\\'" . css-mode))
+#+END_SRC
+
+CSS 中定义的颜色自动显示色彩。
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'rainbow-mode)
+  (dolist (mode '(css-mode less-css-mode html-mode web-mode))
+    (add-hook (intern (concat (symbol-name mode) "-hook"))
+              (lambda () (rainbow-mode))))
+#+END_SRC
+
+*** JavaScript
+
+**** JSON
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'json-mode)
+  (define-key json-mode-map (kbd "C-c <tab>") 'json-mode-beautify)
+#+END_SRC
+
+**** 绑定合适的文件处理类型
+
+#+BEGIN_SRC emacs-lisp
+  (add-to-list 'auto-mode-alist '("\\.js$" . web-mode))
+  (add-to-list 'auto-mode-alist '("\\.jsx$" . web-mode))
+  (add-to-list 'auto-mode-alist '("\\.es6\\'" . web-mode))
+  (add-to-list 'auto-mode-alist '("\\.ejs\\'" . web-mode))
+#+END_SRC
+
+**** Flycheck
+
+先定义获取 eslintrc & eslint 命令的函数。
+
+#+BEGIN_SRC emacs-lisp
+  (defun x-flycheck/get-eslint-rc ()
+    (let ((rc-path (-first (lambda (f) (file-exists-p f))
+                           (if (projectile-project-p)
+                               (list (concat (projectile-project-root) ".eslintrc")
+                                     (concat (projectile-project-root) ".eslintrc.js")
+                                     ".eslintrc"
+                                     "~/.eslintrc")
+                             '(".eslintrc" "~/.eslintrc")))))
+
+      (progn
+        (message rc-path)
+        rc-path)))
+
+  (defun x-flycheck/get-eslint-exec ()
+    (message "hello3")
+    (let ((eslint (-first (lambda (f) (and (file-exists-p f) (file-executable-p f)))
+                           (if (projectile-project-p)
+                               (list (concat (projectile-project-root) "node_modules/.bin/eslint")
+                                     (concat (projectile-project-root) "node_modules/eslint/bin/eslint.js")
+                                     "/usr/bin/eslint")
+                             '("/usr/bin/eslint")))))
+      (progn
+        (message eslint)
+        eslint)))
+#+END_SRC
+
+让 flycheck 知道我们使用 web-mode 来处理 JavaScript。
+
+#+BEGIN_SRC emacs-lisp
+  (with-eval-after-load "flycheck"
+    (flycheck-add-mode 'javascript-eslint 'web-mode))
+#+END_SRC
+
+定义 flycheck。
+
+#+BEGIN_SRC emacs-lisp
+  (add-hook 'web-mode-hook
+            (lambda ()
+              (if (equal web-mode-content-type "javascript")
+                  (web-mode-set-content-type "jsx"))
+              (when (equal web-mode-content-type "jsx")
+                (setq-local emmet-expand-jsx-className? t)
+                (setq-local flycheck-eslintrc (x-flycheck/get-eslint-rc))
+                (setq-local flycheck-javascript-eslint-executable (x-flycheck/get-eslint-exec))
+                (flycheck-mode +1)
+                (setq flycheck-check-syntax-automatically '(save mode-enabled))
+                (flycheck-select-checker 'javascript-eslint))))
+#+END_SRC
+
+**** 添加字符模板等自动补全
+
+#+BEGIN_SRC emacs-lisp
+  (add-hook 'web-mode-hook
+            (lambda ()
+              (setq-local electric-pair-pairs (append electric-pair-pairs '((?\' . ?\') (?` . ?`))))
+              (setq-local electric-pair-text-pairs electric-pair-pairs)))
+#+END_SRC
+
+**** 开启 tern
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'tern)
+  (add-hook 'web-mode-hook (lambda () (tern-mode t)))
+  (setq tern-command (list (or (x/resolve-exec "tern") "tern")))
+#+END_SRC
+
+将 tern 设置为自动补全的数据源。
+
+#+BEGIN_SRC emacs-lisp
+  (with-eval-after-load "company"
+    (package-require 'company-tern)
+    (require 'company-tern)
+    (add-to-list 'company-backends 'company-tern))
+#+END_SRC
+
+**** TODO TypeScript
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'tide)
+  (add-hook 'typescript-mode-hook
+            (lambda ()
+              (tide-setup)
+              (eldoc-mode +1)))
+#+END_SRC
+
+自动格式化。
+
+#+BEGIN_SRC emacs-lisp
+  (add-hook 'before-save-hook 'tide-format-before-save)
+  (setq tide-format-options '(:insertSpaceAfterFunctionKeywordForAnonymousFunctions t :placeOpenBraceOnNewLineForFunctions nil))
+  ;; see https://github.com/Microsoft/TypeScript/blob/cc58e2d7eb144f0b2ff89e6a6685fb4deaa24fde/src/server/protocol.d.ts#L421-473 for the full list available options
+#+END_SRC
+
+**** CoffeeScript
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'coffee-mode)
+#+END_SRC
+
+*** Markdown
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'markdown-mode)
+  (add-to-list 'auto-mode-alist '("\\.markdown$" . markdown-mode))
+  (add-to-list 'auto-mode-alist '("\\.md$" . markdown-mode))
+#+END_SRC
+
+*** Browser
+
+我们可以使用 w3m 来浏览网页。
+
+#+BEGIN_SRC emacs-lisp
+  ;; (package-require 'w3m)
+  ;; (setq w3m-use-cookies t)
+  ;; (add-hook 'w3m-mode-hook
+  ;;          (lambda() (setq-local word-wrap t)))
+#+END_SRC
+
+使用 Olivetti 来优化浏览体验。
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'olivetti)
+  (add-hook 'w3m-mode-hook 'olivetti-mode)
+#+END_SRC
+
+浏览网页可以使用有道词典。
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'youdao-dictionary)
+#+END_SRC
+
+定义打开链接、打开图片、打开 Google 的快捷命令。
+
+#+BEGIN_SRC emacs-lisp
+  "Open the current URL in chrome"
+  (defun x/w3m-open-current-page-in-chrome ()
+    (interactive)
+    (browse-url-chrome w3m-current-url))
+
+  "Open the current link or image in Firefox."
+  (defun x/w3m-open-link-or-image-in-chrome ()
+    (interactive)
+    (browse-url-chrome (or (w3m-anchor)
+                           (w3m-image))))
+
+  (defun x/w3m-google ()
+    (interactive)
+    (w3m-goto-url "https://www.google.com"))
+#+END_SRC
+
+定义浏览时的快捷键。
+
+#+BEGIN_SRC emacs-lisp
+  (with-eval-after-load "w3m"
+    (define-key w3m-mode-map "t" 'youdao-dictionary-search-at-point+) ; translate
+    (define-key w3m-mode-map "b" 'x/w3m-open-link-or-image-in-chrome)) ; browse
+#+END_SRC
+
+*** EShell
+
+设置 Visual Commands。执行这些命令的时候 eshell 将用恰当的 buffer 来显示结果。
+
+#+BEGIN_SRC emacs-lisp
+  (setq eshell-visual-commands
+        '("less" "tmux" "htop" "top" "bash" "zsh" "fish"))
+  (setq eshell-visual-subcommands
+        '(("git" "log" "l" "diff" "show")))
+#+END_SRC
+
+美化。
+
+#+BEGIN_SRC emacs-lisp
+  (package-require 'eshell-git-prompt)
+  (eshell-git-prompt-use-theme 'robbyrussell)
+#+END_SRC
+
+设置更好的 ~clear~。
+
+#+BEGIN_SRC emacs-lisp
+  (defun eshell-clear-buffer ()
+    "Clear terminal"
+    (interactive)
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (eshell-send-input)))
+  (add-hook 'eshell-mode-hook
+        '(lambda()
+            (local-set-key (kbd "C-l") 'eshell-clear-buffer)))
+#+END_SRC
+
+* 自动转存
+
+这段脚本会让本文件在存储是自动执行 ~org-babel-tangle~。
+
+;; Local Variables:
+;; eval: (add-hook 'after-save-hook (lambda ()(org-babel-tangle)) nil t)
+;; End:
