@@ -1,10 +1,10 @@
 y#+TITLE: Emacs 配置文件
-#+Author: xxxiin
+#+Author: fragment0
 #+PROPERTY: header-args :tangle yes
 
 * 前言
 
-很长一段时间都使用 [[https://github.com/xxxiin/emacs.d][emacs.d]] 来管理我的 Emacs 配置文件。但使用过程中暴露了诸多问题：
+很长一段时间都使用 [[https://github.com/fragment0/emacs.d][emacs.d]] 来管理我的 Emacs 配置文件。但使用过程中暴露了诸多问题：
 
 - 由于借鉴了 [[https://github.com/bodil/ohai-emacs][ohai-emacs]]，很多配置也是直接 copy-paste 过来，许多配置没有深究，多了很多无用配置不说，有些不错的功能也根本没有发掘，资源很浪费。
 - 一方面功能发掘不足，另外发掘到的功能也没有记录的地方（当然可以写一个 README，不过追究麻烦且难以同步），导致除了熟悉的命令之外其他用的更少。
@@ -845,27 +845,27 @@ Zen Coding Mode。
 
 最后的方案，Blog 使用 Org Mode 编写在一个文件里。每个 headline 可以被发布。发布结果为 body 内容（~body-only: t~）。
 
-这一步之后，本来希望是直接使用Hexo等系统来完成浏览器展示，但折腾了许久终究有各种各样的不顺手。一怒之下简单写了一个[[https://github.com/xxxiin/xblog][xblog]]。做的事情很简单，就是把之前生成的HTML Body Content给显示出来。为了显然标题、时间等信息，在文件开头使用了与Hexo类似的Meta Data结构。
+这一步之后，本来希望是直接使用Hexo等系统来完成浏览器展示，但折腾了许久终究有各种各样的不顺手。一怒之下简单写了一个[[https://github.com/fragment0/xblog][xblog]]。做的事情很简单，就是把之前生成的HTML Body Content给显示出来。为了显然标题、时间等信息，在文件开头使用了与Hexo类似的Meta Data结构。
 
 #+BEGIN_SRC emacs-lisp
   (package-require 'ox-publish)
 
-  (defconst xxxiin/blog-dir "~/Dropbox/xxxiin/www/")
+  (defconst xxx/blog-dir "~/Dropbox/fragment0/www/")
 
-  (defun xxxiin/prepare-input-buffer (content)
+  (defun xxx/prepare-input-buffer (content)
     (insert content))
 
-  (defun xxxiin/replace-img-src (content)
+  (defun xxx/replace-img-src (content)
     (replace-regexp-in-string "\.\/img\/" "/img/" content))
 
-  (defun xxxiin/get-heading-url ()
+  (defun xxx/get-heading-url ()
     (if-let (u (org-entry-get (point) "url"))
         u
       (s-downcase (s-dashed-words (org-get-heading t t)))))
 
-  (defun xxxiin/org-buffer-to-file (title date tags url folder)
+  (defun xxx/org-buffer-to-file (title date tags url folder)
     (with-current-buffer "*Org HTML Export*"
-      (let ((str (xxxiin/replace-img-src (buffer-substring-no-properties
+      (let ((str (xxx/replace-img-src (buffer-substring-no-properties
                                           (point-min) (point-max)))))
         (erase-buffer)
         (insert str))
@@ -887,11 +887,11 @@ Zen Coding Mode。
       (let ((out-file
              (expand-file-name
               (concat folder "/" url ".xb")
-              xxxiin/blog-dir)))
+              xxx/blog-dir)))
         (write-file out-file)))
     (kill-buffer))
 
-  (defun xxxiin/export-section-to-blog ()
+  (defun xxx/export-section-to-blog ()
     "Exports current subtree to blog."
     (interactive)
     (if (plist-get (org-export-get-environment) :title)
@@ -918,17 +918,17 @@ Zen Coding Mode。
                      (current-time)))
              (tags (nreverse (org-get-tags-at)))
              (title (org-get-heading t t))
-             (url (xxxiin/get-heading-url))
+             (url (xxx/get-heading-url))
              (series (org-entry-get (point) "series" t))
              (folder (file-name-base))
              (subtree-content subtree-content-temp))
         (with-temp-buffer
           (setq-local org-export-show-temporary-export-buffer nil)
-          (xxxiin/prepare-input-buffer subtree-content)
+          (xxx/prepare-input-buffer subtree-content)
           (org-html-export-as-html nil nil nil t '(:with-toc nil :section-numbers nil))
-          (xxxiin/org-buffer-to-file title date tags url folder)))))
+          (xxx/org-buffer-to-file title date tags url folder)))))
 
-  (defun xxxiin/export-index ()
+  (defun xxx/export-index ()
     "Exports current file to index."
     (interactive)
     (if (plist-get (org-export-get-environment) :title)
@@ -949,7 +949,7 @@ Zen Coding Mode。
                  (-insert-at 0
                              (list
                               title
-                              (xxxiin/get-heading-url)
+                              (xxx/get-heading-url)
                               (date-to-time (org-entry-get (point) "CLOSED" t))
                               )
                              result))))
@@ -972,11 +972,11 @@ Zen Coding Mode。
             (let ((out-file
                      (expand-file-name
                       (concat folder "/index.yml")
-                      xxxiin/blog-dir)))
+                      xxx/blog-dir)))
                 (write-file out-file))
             )))))
 
-  (defun xxxiin/export-file-to-blog ()
+  (defun xxx/export-file-to-blog ()
     "Exports current file to blog article."
     (interactive)
     (if (not (plist-get (org-export-get-environment) :title))
@@ -992,7 +992,7 @@ Zen Coding Mode。
             (setq-local org-export-show-temporary-export-buffer nil)
             (insert buffer)
             (org-html-export-as-html nil nil nil t '(:section-numbers nil))
-            (xxxiin/org-buffer-to-file title date tags url folder)))))
+            (xxx/org-buffer-to-file title date tags url folder)))))
 #+END_SRC
 
 **** Olivetti
@@ -1029,9 +1029,9 @@ Zen Coding Mode。
   (setq org-publish-project-alist
         '(
           ("notes"
-           :base-directory "~/Dropbox/xxxiin/org/note"
+           :base-directory "~/Dropbox/fragment0/org/note"
            :base-extension "org"
-           :publishing-directory "~/Dropbox/xxxiin/www/note"
+           :publishing-directory "~/Dropbox/fragment0/www/note"
            :recursive t
            :exclude ".*\.draft\.org\\|journal\.org"
            :publishing-function org-html-publish-to-html
@@ -1041,20 +1041,20 @@ Zen Coding Mode。
            :body-only t
            :auto-sitemap t                ; Generate sitemap.org automagically...
            :sitemap-filename "notes.org"  ; ... call it sitemap.org (it's the default)...
-           :sitemap-title "xxxiin"
+           :sitemap-title "fragment0"
            :sitemap-date-format "%Y%m%d"
            :sitemap-sort-files anti-chronologically
-           :author "xxxiin"
-           :email "i at xxxiin dot com"
+           :author "fragment0"
+           :email "hi at fragment0 dot com"
            )
           ("static"
-           :base-directory "~/Dropbox/xxxiin/org/"
+           :base-directory "~/Dropbox/fragment0/org/"
            :base-extension "css\\|js\\|png\\|jpg\\|gif\\|pdf\\|mp3\\|ogg\\|swf"
-           :publishing-directory (concat xxxiin/blog-dir "source")
+           :publishing-directory (concat xxx/blog-dir "source")
            :recursive t
            :publishing-function org-publish-attachment
            )
-          ("xxxiin" :components ("notes" "static"))
+          ("xxx" :components ("notes" "static"))
           ))
 #+END_SRC
 
