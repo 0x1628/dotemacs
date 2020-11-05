@@ -1214,15 +1214,6 @@ CSS 中定义的颜色自动显示色彩。
   (setq tern-command (list (or (x/resolve-exec "tern") "tern")))
 #+END_SRC
 
-将 tern 设置为自动补全的数据源。
-
-#+BEGIN_SRC emacs-lisp
-  (with-eval-after-load "company"
-    (package-require 'company-tern)
-    (require 'company-tern)
-    (add-to-list 'company-backends 'company-tern))
-#+END_SRC
-
 **** TODO TypeScript
 
 #+BEGIN_SRC emacs-lisp
